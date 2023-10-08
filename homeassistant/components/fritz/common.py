@@ -535,13 +535,7 @@ class FritzBoxTools(
         ) = await self._async_update_device_info()
 
         _LOGGER.debug("Checking devices for FRITZ!Box device %s", self.host)
-        _default_consider_home = DEFAULT_CONSIDER_HOME.total_seconds()
-        if self._options:
-            consider_home = self._options.get(
-                CONF_CONSIDER_HOME, _default_consider_home
-            )
-        else:
-            consider_home = _default_consider_home
+        consider_home = self.get_consider_home()
 
         new_device = False
         hosts = await self._async_update_hosts_info()
@@ -560,6 +554,18 @@ class FritzBoxTools(
             await self.async_send_signal_device_update(new_device)
             return
 
+        topology, mesh_intf = await self.get_mesh_devices()
+        await self.get_client_devices(hosts, consider_home, mesh_intf, new_device, topology)
+
+    async def get_consider_home(self):
+        """Get consider home value."""
+        _default_consider_home = DEFAULT_CONSIDER_HOME.total_seconds()
+        if self._options:
+            return self._options.get(CONF_CONSIDER_HOME, _default_consider_home)
+        return _default_consider_home
+
+    async def get_mesh_devices(self):
+        """Get mesh devices."""
         try:
             if not (
                 topology := await self.hass.async_add_executor_job(
@@ -573,6 +579,10 @@ class FritzBoxTools(
             # Avoid duplicating device trackers
             return
 
+        return await self.process_mesh_topology(topology)
+
+    async def process_mesh_topology(self, topology):
+        """Process mesh topology."""
         mesh_intf = {}
         # first get all meshed devices
         for node in topology.get("nodes", []):
@@ -591,7 +601,10 @@ class FritzBoxTools(
                 if dr.format_mac(int_mac) == self.mac:
                     self.mesh_role = MeshRoles(node["mesh_role"])
 
-        # second get all client devices
+        return topology, mesh_intf
+
+    async def get_client_devices(self, hosts, consider_home, mesh_intf, new_device, topology):
+        """Get client devices."""
         for node in topology.get("nodes", []):
             if node["is_meshed"]:
                 continue

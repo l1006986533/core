@@ -70,20 +70,31 @@ SAM_DEVICE_ATTRIBUTES = {
     "accelerationSensorTriggerAngle": ATTR_ACCELERATION_SENSOR_TRIGGER_ANGLE,
 }
 
+async def get_device_entities(hap):
+    entities: list[HomematicipGenericEntity] = []
 
-async def async_setup_entry(
-    hass: HomeAssistant,
-    config_entry: ConfigEntry,
-    async_add_entities: AddEntitiesCallback,
-) -> None:
-    """Set up the HomematicIP Cloud binary sensor from a config entry."""
-    hap = hass.data[HMIPC_DOMAIN][config_entry.unique_id]
-    entities: list[HomematicipGenericEntity] = [HomematicipCloudConnectionSensor(hap)]
+    DEVICE_CLASS_MAPPER = {
+        AsyncAccelerationSensor: HomematicipAccelerationSensor,
+        AsyncTiltVibrationSensor: HomematicipTiltVibrationSensor,
+        AsyncShutterContact: HomematicipShutterContact,
+        AsyncShutterContactMagnetic: HomematicipShutterContact,
+        AsyncMotionDetectorIndoor: HomematicipMotionDetector,
+        AsyncMotionDetectorOutdoor: HomematicipMotionDetector,
+        AsyncMotionDetectorPushButton: HomematicipMotionDetector,
+        AsyncPluggableMainsFailureSurveillance: HomematicipPluggableMainsFailureSurveillanceSensor,
+        AsyncPresenceDetectorIndoor: HomematicipPresenceDetector,
+        AsyncSmokeDetector: HomematicipSmokeDetector,
+        AsyncWaterSensor: HomematicipWaterDetector,
+        AsyncRainSensor: HomematicipRainSensor,
+        AsyncWeatherSensorPlus: HomematicipRainSensor,
+        AsyncWeatherSensorPro: HomematicipRainSensor,
+    }
+
     for device in hap.home.devices:
-        if isinstance(device, AsyncAccelerationSensor):
-            entities.append(HomematicipAccelerationSensor(hap, device))
-        if isinstance(device, AsyncTiltVibrationSensor):
-            entities.append(HomematicipTiltVibrationSensor(hap, device))
+        entity_class = DEVICE_CLASS_MAPPER.get(type(device))
+        if entity_class:
+            entities.append(entity_class(hap, device))
+
         if isinstance(device, AsyncWiredInput32):
             for channel in range(1, 33):
                 entities.append(
@@ -98,36 +109,9 @@ async def async_setup_entry(
             device, (AsyncContactInterface, AsyncFullFlushContactInterface)
         ):
             entities.append(HomematicipContactInterface(hap, device))
-        if isinstance(
-            device,
-            (AsyncShutterContact, AsyncShutterContactMagnetic),
-        ):
-            entities.append(HomematicipShutterContact(hap, device))
+        
         if isinstance(device, AsyncRotaryHandleSensor):
             entities.append(HomematicipShutterContact(hap, device, True))
-        if isinstance(
-            device,
-            (
-                AsyncMotionDetectorIndoor,
-                AsyncMotionDetectorOutdoor,
-                AsyncMotionDetectorPushButton,
-            ),
-        ):
-            entities.append(HomematicipMotionDetector(hap, device))
-        if isinstance(device, AsyncPluggableMainsFailureSurveillance):
-            entities.append(
-                HomematicipPluggableMainsFailureSurveillanceSensor(hap, device)
-            )
-        if isinstance(device, AsyncPresenceDetectorIndoor):
-            entities.append(HomematicipPresenceDetector(hap, device))
-        if isinstance(device, AsyncSmokeDetector):
-            entities.append(HomematicipSmokeDetector(hap, device))
-        if isinstance(device, AsyncWaterSensor):
-            entities.append(HomematicipWaterDetector(hap, device))
-        if isinstance(
-            device, (AsyncRainSensor, AsyncWeatherSensorPlus, AsyncWeatherSensorPro)
-        ):
-            entities.append(HomematicipRainSensor(hap, device))
         if isinstance(
             device, (AsyncWeatherSensor, AsyncWeatherSensorPlus, AsyncWeatherSensorPro)
         ):
@@ -135,6 +119,19 @@ async def async_setup_entry(
             entities.append(HomematicipSunshineSensor(hap, device))
         if isinstance(device, AsyncDevice) and device.lowBat is not None:
             entities.append(HomematicipBatterySensor(hap, device))
+    return entities
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up the HomematicIP Cloud binary sensor from a config entry."""
+    hap = hass.data[HMIPC_DOMAIN][config_entry.unique_id]
+    entities: list[HomematicipGenericEntity] = [HomematicipCloudConnectionSensor(hap)]
+    
+    entities.extend(get_device_entities(hap))
 
     for group in hap.home.groups:
         if isinstance(group, AsyncSecurityGroup):

@@ -323,39 +323,21 @@ class HuaweiLteData(NamedTuple):
     routers: dict[str, Router]
 
 
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up Huawei LTE component from config entry."""
-    url = entry.data[CONF_URL]
+async def _connect(entry, url) -> Connection:
+    """Set up a connection."""
+    if entry.options.get(CONF_UNAUTHENTICATED_MODE):
+        _LOGGER.debug("Connecting in unauthenticated mode, reduced feature set")
+        connection = Connection(url, timeout=CONNECTION_TIMEOUT)
+    else:
+        _LOGGER.debug("Connecting in authenticated mode, full feature set")
+        username = entry.data.get(CONF_USERNAME) or ""
+        password = entry.data.get(CONF_PASSWORD) or ""
+        connection = Connection(
+            url, username=username, password=password, timeout=CONNECTION_TIMEOUT
+        )
+    return connection
 
-    def _connect() -> Connection:
-        """Set up a connection."""
-        if entry.options.get(CONF_UNAUTHENTICATED_MODE):
-            _LOGGER.debug("Connecting in unauthenticated mode, reduced feature set")
-            connection = Connection(url, timeout=CONNECTION_TIMEOUT)
-        else:
-            _LOGGER.debug("Connecting in authenticated mode, full feature set")
-            username = entry.data.get(CONF_USERNAME) or ""
-            password = entry.data.get(CONF_PASSWORD) or ""
-            connection = Connection(
-                url, username=username, password=password, timeout=CONNECTION_TIMEOUT
-            )
-        return connection
-
-    try:
-        connection = await hass.async_add_executor_job(_connect)
-    except LoginErrorInvalidCredentialsException as ex:
-        raise ConfigEntryAuthFailed from ex
-    except Timeout as ex:
-        raise ConfigEntryNotReady from ex
-
-    # Set up router
-    router = Router(hass, entry, connection, url)
-
-    # Do initial data update
-    await hass.async_add_executor_job(router.update)
-
-    # Check that we found required information
-    router_info = router.data.get(KEY_DEVICE_INFORMATION)
+async def check_info(hass, entry, router, router_info, url):
     if not entry.unique_id:
         # Transitional from < 2021.8: update None config entry and entity unique ids
         if router_info and (serial_number := router_info.get("SerialNumber")):
@@ -385,6 +367,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 )
             _LOGGER.error(msg, url)
             return False
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up Huawei LTE component from config entry."""
+    url = entry.data[CONF_URL]
+    try:
+        connection = await hass.async_add_executor_job(_connect, entry, url)
+    except LoginErrorInvalidCredentialsException as ex:
+        raise ConfigEntryAuthFailed from ex
+    except Timeout as ex:
+        raise ConfigEntryNotReady from ex
+
+    # Set up router
+    router = Router(hass, entry, connection, url)
+    # Do initial data update
+    await hass.async_add_executor_job(router.update)
+    # Check that we found required information
+    router_info = router.data.get(KEY_DEVICE_INFORMATION)
+    check_info(hass, entry, router, router_info, url)
 
     # Store reference to router
     hass.data[DOMAIN].routers[entry.entry_id] = router

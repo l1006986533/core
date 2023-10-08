@@ -92,25 +92,10 @@ async def async_attach_trigger(
 ) -> CALLBACK_TYPE:
     """Listen for state changes based on configuration."""
     entity_ids = config[CONF_ENTITY_ID]
-
-    if (from_state := config.get(CONF_FROM)) is not None:
-        match_from_state = process_state_match(from_state)
-    elif (not_from_state := config.get(CONF_NOT_FROM)) is not None:
-        match_from_state = process_state_match(not_from_state, invert=True)
-    else:
-        match_from_state = process_state_match(MATCH_ALL)
-
-    if (to_state := config.get(CONF_TO)) is not None:
-        match_to_state = process_state_match(to_state)
-    elif (not_to_state := config.get(CONF_NOT_TO)) is not None:
-        match_to_state = process_state_match(not_to_state, invert=True)
-    else:
-        match_to_state = process_state_match(MATCH_ALL)
-
+    match_from_state = get_match_state(config, CONF_FROM, CONF_NOT_FROM)
+    match_to_state = get_match_state(config, CONF_TO, CONF_NOT_TO)
     time_delta = config.get(CONF_FOR)
     template.attach(hass, time_delta)
-    # If neither CONF_FROM or CONF_TO are specified,
-    # fire on all changes to the state or an attribute
     match_all = all(
         item not in config for item in (CONF_FROM, CONF_NOT_FROM, CONF_NOT_TO, CONF_TO)
     )
@@ -124,114 +109,127 @@ async def async_attach_trigger(
 
     @callback
     def state_automation_listener(event: EventType[EventStateChangedData]) -> None:
-        """Listen for state changes and calls action."""
-        entity = event.data["entity_id"]
-        from_s = event.data["old_state"]
-        to_s = event.data["new_state"]
-
-        if from_s is None:
-            old_value = None
-        elif attribute is None:
-            old_value = from_s.state
-        else:
-            old_value = from_s.attributes.get(attribute)
-
-        if to_s is None:
-            new_value = None
-        elif attribute is None:
-            new_value = to_s.state
-        else:
-            new_value = to_s.attributes.get(attribute)
-
-        # When we listen for state changes with `match_all`, we
-        # will trigger even if just an attribute changes. When
-        # we listen to just an attribute, we should ignore all
-        # other attribute changes.
-        if attribute is not None and old_value == new_value:
+        old_value, new_value = get_state_values(event, attribute)
+        
+        if not should_trigger(old_value, new_value, match_from_state, match_to_state, match_all, attribute):
             return
-
-        if (
-            not match_from_state(old_value)
-            or not match_to_state(new_value)
-            or (not match_all and old_value == new_value)
-        ):
-            return
-
-        @callback
-        def call_action():
-            """Call action with right context."""
-            hass.async_run_hass_job(
-                job,
-                {
-                    "trigger": {
-                        **trigger_data,
-                        "platform": platform_type,
-                        "entity_id": entity,
-                        "from_state": from_s,
-                        "to_state": to_s,
-                        "for": time_delta if not time_delta else period[entity],
-                        "attribute": attribute,
-                        "description": f"state of {entity}",
-                    }
-                },
-                event.context,
-            )
-
-        if not time_delta:
-            call_action()
-            return
-
-        data = {
-            "trigger": {
-                "platform": "state",
-                "entity_id": entity,
-                "from_state": from_s,
-                "to_state": to_s,
-            }
-        }
-        variables = {**_variables, **data}
-
-        try:
-            period[entity] = cv.positive_time_period(
-                template.render_complex(time_delta, variables)
-            )
-        except (exceptions.TemplateError, vol.Invalid) as ex:
-            _LOGGER.error(
-                "Error rendering '%s' for template: %s", trigger_info["name"], ex
-            )
-            return
-
-        def _check_same_state(_, _2, new_st: State | None) -> bool:
-            if new_st is None:
-                return False
-
-            cur_value: str | None
-            if attribute is None:
-                cur_value = new_st.state
-            else:
-                cur_value = new_st.attributes.get(attribute)
-
-            if CONF_FROM in config and CONF_TO not in config:
-                return cur_value != old_value
-
-            return cur_value == new_value
-
-        unsub_track_same[entity] = async_track_same_state(
-            hass,
-            period[entity],
-            call_action,
-            _check_same_state,
-            entity_ids=entity,
-        )
+        
+        handle_trigger(hass, event, old_value, new_value, job, trigger_data, platform_type, attribute, time_delta, period, config, _variables, unsub_track_same, trigger_info)
 
     unsub = async_track_state_change_event(hass, entity_ids, state_automation_listener)
 
     @callback
     def async_remove():
         """Remove state listeners async."""
-        unsub()
-        for async_remove in unsub_track_same.values():
-            async_remove()
-        unsub_track_same.clear()
+        remove_listeners(unsub, unsub_track_same)
 
     return async_remove
+
+def get_match_state(config, from_conf, not_from_conf):
+    if (state_value := config.get(from_conf)) is not None:
+        return process_state_match(state_value)
+    elif (not_state_value := config.get(not_from_conf)) is not None:
+        return process_state_match(not_state_value, invert=True)
+    else:
+        return process_state_match(MATCH_ALL)
+
+def get_state_values(event, attribute):
+    from_s = event.data["old_state"]
+    to_s = event.data["new_state"]
+    old_value = get_value(from_s, attribute)
+    new_value = get_value(to_s, attribute)
+    return old_value, new_value
+
+def get_value(state, attribute):
+    if state is None:
+        return None
+    elif attribute is None:
+        return state.state
+    else:
+        return state.attributes.get(attribute)
+
+def should_trigger(old_value, new_value, match_from_state, match_to_state, match_all, attribute):
+    if attribute is not None and old_value == new_value:
+        return False
+    return match_from_state(old_value) and match_to_state(new_value) and (match_all or old_value != new_value)
+
+def handle_trigger(hass, event, old_value, new_value, job, trigger_data, platform_type, attribute, time_delta, period, config, _variables, unsub_track_same, trigger_info):
+    @callback
+    def call_action():
+        hass.async_run_hass_job(
+            job,
+            {
+                "trigger": {
+                    **trigger_data,
+                    "platform": platform_type,
+                    "entity_id": event.data["entity_id"],
+                    "from_state": old_value,
+                    "to_state": new_value,
+                    "for": time_delta if not time_delta else period[event.data["entity_id"]],
+                    "attribute": attribute,
+                    "description": f"state of {event.data['entity_id']}",
+                }
+            },
+            event.context,
+        )
+
+    if not time_delta:
+        call_action()
+        return
+
+    update_period(hass, old_value, new_value, time_delta, _variables, event, config, period, call_action, unsub_track_same, trigger_info)
+
+def update_period(hass, old_value, new_value, attribute, time_delta, _variables, event, config, period, call_action, unsub_track_same, trigger_info):
+    entity = event.data["entity_id"]
+    from_s = event.data["old_state"]
+    to_s = event.data["new_state"]
+    
+    data = {
+        "trigger": {
+            "platform": "state",
+            "entity_id": entity,
+            "from_state": from_s,
+            "to_state": to_s,
+        }
+    }
+    variables = {**_variables, **data}
+    
+    try:
+        period[entity] = cv.positive_time_period(
+            template.render_complex(time_delta, variables)
+        )
+    except (exceptions.TemplateError, vol.Invalid) as ex:
+        _LOGGER.error(
+            "Error rendering '%s' for template: %s", trigger_info["name"], ex
+        )
+        return
+    
+    def _check_same_state(_, _2, new_st: State | None) -> bool:
+        if new_st is None:
+            return False
+
+        cur_value: str | None
+        if attribute is None:
+            cur_value = new_st.state
+        else:
+            cur_value = new_st.attributes.get(attribute)
+
+        if CONF_FROM in config and CONF_TO not in config:
+            return cur_value != old_value
+
+        return cur_value == new_value
+    
+    unsub_track_same[entity] = async_track_same_state(
+        hass,
+        period[entity],
+        call_action,
+        _check_same_state,
+        entity_ids=entity,
+    )
+
+
+def remove_listeners(unsub, unsub_track_same):
+    unsub()
+    for async_remove in unsub_track_same.values():
+        async_remove()
+    unsub_track_same.clear()

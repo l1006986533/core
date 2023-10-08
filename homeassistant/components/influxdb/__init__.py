@@ -330,78 +330,70 @@ class InfluxClient:
     close: Callable[[], None]
 
 
-def get_influx_connection(  # noqa: C901
-    conf, test_write=False, test_read=False
-) -> InfluxClient:
-    """Create the correct influx connection for the API version."""
-    kwargs = {
-        CONF_TIMEOUT: TIMEOUT,
-    }
-    precision = conf.get(CONF_PRECISION)
+def v2(kwargs, conf, test_write, precision, test_read) -> InfluxClient:
+    kwargs[CONF_TIMEOUT] = TIMEOUT * 1000
+    kwargs[CONF_URL] = conf[CONF_URL]
+    kwargs[CONF_TOKEN] = conf[CONF_TOKEN]
+    kwargs[INFLUX_CONF_ORG] = conf[CONF_ORG]
+    kwargs[CONF_VERIFY_SSL] = conf[CONF_VERIFY_SSL]
+    if CONF_SSL_CA_CERT in conf:
+        kwargs[CONF_SSL_CA_CERT] = conf[CONF_SSL_CA_CERT]
+    bucket = conf.get(CONF_BUCKET)
+    influx = InfluxDBClientV2(**kwargs)
+    query_api = influx.query_api()
+    initial_write_mode = SYNCHRONOUS if test_write else ASYNCHRONOUS
+    write_api = influx.write_api(write_options=initial_write_mode)
 
-    if conf[CONF_API_VERSION] == API_VERSION_2:
-        kwargs[CONF_TIMEOUT] = TIMEOUT * 1000
-        kwargs[CONF_URL] = conf[CONF_URL]
-        kwargs[CONF_TOKEN] = conf[CONF_TOKEN]
-        kwargs[INFLUX_CONF_ORG] = conf[CONF_ORG]
-        kwargs[CONF_VERIFY_SSL] = conf[CONF_VERIFY_SSL]
-        if CONF_SSL_CA_CERT in conf:
-            kwargs[CONF_SSL_CA_CERT] = conf[CONF_SSL_CA_CERT]
-        bucket = conf.get(CONF_BUCKET)
-        influx = InfluxDBClientV2(**kwargs)
-        query_api = influx.query_api()
-        initial_write_mode = SYNCHRONOUS if test_write else ASYNCHRONOUS
-        write_api = influx.write_api(write_options=initial_write_mode)
+    def write_v2(json):
+        """Write data to V2 influx."""
+        data = {"bucket": bucket, "record": json}
 
-        def write_v2(json):
-            """Write data to V2 influx."""
-            data = {"bucket": bucket, "record": json}
+        if precision is not None:
+            data["write_precision"] = precision
 
-            if precision is not None:
-                data["write_precision"] = precision
+        try:
+            write_api.write(**data)
+        except (urllib3.exceptions.HTTPError, OSError) as exc:
+            raise ConnectionError(CONNECTION_ERROR % exc) from exc
+        except ApiException as exc:
+            if exc.status == CODE_INVALID_INPUTS:
+                raise ValueError(WRITE_ERROR % (json, exc)) from exc
+            raise ConnectionError(CLIENT_ERROR_V2 % exc) from exc
 
-            try:
-                write_api.write(**data)
-            except (urllib3.exceptions.HTTPError, OSError) as exc:
-                raise ConnectionError(CONNECTION_ERROR % exc) from exc
-            except ApiException as exc:
-                if exc.status == CODE_INVALID_INPUTS:
-                    raise ValueError(WRITE_ERROR % (json, exc)) from exc
-                raise ConnectionError(CLIENT_ERROR_V2 % exc) from exc
+    def query_v2(query, _=None):
+        """Query V2 influx."""
+        try:
+            return query_api.query(query)
+        except (urllib3.exceptions.HTTPError, OSError) as exc:
+            raise ConnectionError(CONNECTION_ERROR % exc) from exc
+        except ApiException as exc:
+            if exc.status == CODE_INVALID_INPUTS:
+                raise ValueError(QUERY_ERROR % (query, exc)) from exc
+            raise ConnectionError(CLIENT_ERROR_V2 % exc) from exc
 
-        def query_v2(query, _=None):
-            """Query V2 influx."""
-            try:
-                return query_api.query(query)
-            except (urllib3.exceptions.HTTPError, OSError) as exc:
-                raise ConnectionError(CONNECTION_ERROR % exc) from exc
-            except ApiException as exc:
-                if exc.status == CODE_INVALID_INPUTS:
-                    raise ValueError(QUERY_ERROR % (query, exc)) from exc
-                raise ConnectionError(CLIENT_ERROR_V2 % exc) from exc
+    def close_v2():
+        """Close V2 influx client."""
+        influx.close()
 
-        def close_v2():
-            """Close V2 influx client."""
-            influx.close()
+    buckets = []
+    if test_write:
+        # Try to write b"" to influx. If we can connect and creds are valid
+        # Then invalid inputs is returned. Anything else is a broken config
+        with suppress(ValueError):
+            write_v2(b"")
+        write_api = influx.write_api(write_options=ASYNCHRONOUS)
 
-        buckets = []
-        if test_write:
-            # Try to write b"" to influx. If we can connect and creds are valid
-            # Then invalid inputs is returned. Anything else is a broken config
-            with suppress(ValueError):
-                write_v2(b"")
-            write_api = influx.write_api(write_options=ASYNCHRONOUS)
+    if test_read:
+        tables = query_v2(TEST_QUERY_V2)
+        if tables and tables[0].records:
+            buckets = [bucket.values["name"] for bucket in tables[0].records]
+        else:
+            buckets = []
 
-        if test_read:
-            tables = query_v2(TEST_QUERY_V2)
-            if tables and tables[0].records:
-                buckets = [bucket.values["name"] for bucket in tables[0].records]
-            else:
-                buckets = []
+    return InfluxClient(buckets, write_v2, query_v2, close_v2)
 
-        return InfluxClient(buckets, write_v2, query_v2, close_v2)
 
-    # Else it's a V1 client
+def v1(kwargs, conf, precision, test_write, test_read):
     if CONF_SSL_CA_CERT in conf and conf[CONF_VERIFY_SSL]:
         kwargs[CONF_VERIFY_SSL] = conf[CONF_SSL_CA_CERT]
     else:
@@ -472,6 +464,20 @@ def get_influx_connection(  # noqa: C901
         databases = [db["name"] for db in query_v1(TEST_QUERY_V1)]
 
     return InfluxClient(databases, write_v1, query_v1, close_v1)
+
+
+def get_influx_connection(  # noqa: C901
+    conf, test_write=False, test_read=False
+) -> InfluxClient:
+    """Create the correct influx connection for the API version."""
+    kwargs = {
+        CONF_TIMEOUT: TIMEOUT,
+    }
+    precision = conf.get(CONF_PRECISION)
+
+    if conf[CONF_API_VERSION] == API_VERSION_2:
+        return v2(kwargs, conf, test_write, precision, test_read)
+    return v1(kwargs, conf, precision, test_write, test_read)
 
 
 def _retry_setup(hass: HomeAssistant, config: ConfigType) -> None:

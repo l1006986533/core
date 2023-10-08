@@ -392,137 +392,129 @@ class DefaultAgent(AbstractConversationAgent):
                 self._get_or_load_intents, language, hass_components
             )
 
-    def _get_or_load_intents(
-        self, language: str, hass_components: set[str]
-    ) -> LanguageIntents | None:
+    def _get_or_load_intents(self, language: str, hass_components: set[str]) -> LanguageIntents | None:
         """Load all intents for language (run inside executor)."""
         lang_intents = self._lang_intents.get(language)
-
-        if lang_intents is None:
-            intents_dict: dict[str, Any] = {}
-            loaded_components: set[str] = set()
-        else:
-            intents_dict = lang_intents.intents_dict
-            loaded_components = lang_intents.loaded_components
-
-        # en-US, en_US, en, ...
+        
+        intents_dict, loaded_components = self._initialize_intents_and_components(lang_intents)
         language_variations = list(_get_language_variations(language))
 
-        # Check if any new components have been loaded
-        intents_changed = False
+        flag_intents_changed = self._process_components(
+            hass_components, loaded_components, language, 
+            language_variations, intents_dict
+        )
+
+        flag_intents_changed |= self._process_custom_sentences(
+            lang_intents, language_variations, intents_dict
+        )
+
+        flag_intents_changed |= self._load_sentences_from_config(
+            lang_intents, language, intents_dict
+        )
+
+        return self._finalize_intents(
+            lang_intents, language, intents_dict, flag_intents_changed, loaded_components
+        )
+
+    def _initialize_intents_and_components(self, lang_intents):
+        if lang_intents is None:
+            return {}, set()
+        else:
+            return lang_intents.intents_dict, lang_intents.loaded_components
+    
+    def _process_components(self, hass_components, loaded_components, 
+                            language, language_variations, intents_dict):
+        flag_intents_changed = False
         for component in hass_components:
             if component in loaded_components:
                 continue
-
-            # Don't check component again
             loaded_components.add(component)
-
-            # Check for intents for this component with the target language.
-            # Try en-US, en, etc.
-            for language_variation in language_variations:
-                component_intents = get_intents(
-                    component, language_variation, json_load=json_load
-                )
-                if component_intents:
-                    # Merge sentences into existing dictionary
-                    merge_dict(intents_dict, component_intents)
-
-                    # Will need to recreate graph
-                    intents_changed = True
-                    _LOGGER.debug(
-                        "Loaded intents component=%s, language=%s (%s)",
-                        component,
-                        language,
-                        language_variation,
-                    )
-                    break
-
-        # Check for custom sentences in <config>/custom_sentences/<language>/
-        if lang_intents is None:
-            # Only load custom sentences once, otherwise they will be re-loaded
-            # when components change.
-            for language_variation in language_variations:
-                custom_sentences_dir = Path(
-                    self.hass.config.path("custom_sentences", language_variation)
-                )
-                if custom_sentences_dir.is_dir():
-                    for custom_sentences_path in custom_sentences_dir.rglob("*.yaml"):
-                        with custom_sentences_path.open(
-                            encoding="utf-8"
-                        ) as custom_sentences_file:
-                            # Merge custom sentences
-                            if isinstance(
-                                custom_sentences_yaml := yaml.safe_load(
-                                    custom_sentences_file
-                                ),
-                                dict,
-                            ):
-                                merge_dict(intents_dict, custom_sentences_yaml)
-                            else:
-                                _LOGGER.warning(
-                                    "Custom sentences file does not match expected format path=%s",
-                                    custom_sentences_file.name,
-                                )
-
-                        # Will need to recreate graph
-                        intents_changed = True
-                        _LOGGER.debug(
-                            "Loaded custom sentences language=%s (%s), path=%s",
-                            language,
-                            language_variation,
-                            custom_sentences_path,
-                        )
-
-                    # Stop after first matched language variation
-                    break
-
-            # Load sentences from HA config for default language only
-            if self._config_intents and (language == self.hass.config.language):
-                merge_dict(
-                    intents_dict,
-                    {
-                        "intents": {
-                            intent_name: {"data": [{"sentences": sentences}]}
-                            for intent_name, sentences in self._config_intents.items()
-                        }
-                    },
-                )
-                intents_changed = True
+            flag_intents_changed |= self._process_language_variations(
+                component, language, language_variations, intents_dict
+            )
+        return flag_intents_changed
+    
+    def _process_language_variations(self, component, language, 
+                                     language_variations, intents_dict):
+        for language_variation in language_variations:
+            component_intents = get_intents(
+                component, language_variation, json_load=json_load
+            )
+            if component_intents:
+                merge_dict(intents_dict, component_intents)
                 _LOGGER.debug(
-                    "Loaded intents from configuration.yaml",
+                    "Loaded intents component=%s, language=%s (%s)",
+                    component, language, language_variation,
                 )
+                return True
+        return False
+    
+    def _process_custom_sentences(self, lang_intents, language_variations, intents_dict):
+        if lang_intents is not None:
+            return False
+        
+        for language_variation in language_variations:
+            custom_sentences_dir = Path(
+                self.hass.config.path("custom_sentences", language_variation)
+            )
+            if custom_sentences_dir.is_dir():
+                self._load_custom_sentences(custom_sentences_dir, intents_dict)
+                return True
+        return False
+    
+    def _load_custom_sentences(self, custom_sentences_dir, intents_dict):
+        for custom_sentences_path in custom_sentences_dir.rglob("*.yaml"):
+            with custom_sentences_path.open(encoding="utf-8") as custom_sentences_file:
+                if isinstance(
+                    custom_sentences_yaml := yaml.safe_load(custom_sentences_file), dict
+                ):
+                    merge_dict(intents_dict, custom_sentences_yaml)
+                else:
+                    _LOGGER.warning(
+                        "Custom sentences file does not match expected format path=%s",
+                        custom_sentences_file.name,
+                    )
+            _LOGGER.debug(
+                "Loaded custom sentences language=%s (%s), path=%s",
+                language, language_variation, custom_sentences_path,
+            )
 
+    def _load_sentences_from_config(self, lang_intents, language, intents_dict):
+        if lang_intents is not None or (self._config_intents and language != self.hass.config.language):
+            return False
+        
+        merge_dict(
+            intents_dict,
+            {"intents": {intent_name: {"data": [{"sentences": sentences}]}
+                         for intent_name, sentences in self._config_intents.items()}}
+        )
+        _LOGGER.debug("Loaded intents from configuration.yaml")
+        return True
+    
+    def _finalize_intents(self, lang_intents, language, intents_dict, 
+                          flag_intents_changed, loaded_components):
         if not intents_dict:
             return None
-
-        if not intents_changed and lang_intents is not None:
+        if not flag_intents_changed and lang_intents is not None:
             return lang_intents
 
-        # This can be made faster by not re-parsing existing sentences.
-        # But it will likely only be called once anyways, unless new
-        # components with sentences are often being loaded.
         intents = Intents.from_dict(intents_dict)
-
-        # Load responses
         responses_dict = intents_dict.get("responses", {})
         intent_responses = responses_dict.get("intents", {})
         error_responses = responses_dict.get("errors", {})
 
         if lang_intents is None:
             lang_intents = LanguageIntents(
-                intents,
-                intents_dict,
-                intent_responses,
-                error_responses,
-                loaded_components,
+                intents, intents_dict, intent_responses, 
+                error_responses, loaded_components
             )
             self._lang_intents[language] = lang_intents
         else:
             lang_intents.intents = intents
             lang_intents.intent_responses = intent_responses
             lang_intents.error_responses = error_responses
-
-        return lang_intents
+        
+        return _lang_intents
 
     @core.callback
     def _async_handle_area_registry_changed(self, event: core.Event) -> None:

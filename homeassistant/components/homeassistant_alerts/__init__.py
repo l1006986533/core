@@ -148,57 +148,44 @@ class AlertUpdateCoordinator(DataUpdateCoordinator[dict[str, IntegrationAlert]])
         )
         alerts = await response.json()
 
-        result = {}
+        return {
+            integration_alert.issue_id: integration_alert
+            for integration_alert in map(self._process_alert, alerts)
+            if integration_alert is not None
+        }
 
-        for alert in alerts:
-            if "integrations" not in alert:
-                continue
+    def _process_alert(self, alert) -> IntegrationAlert | None:
+        if "integrations" not in alert:
+            return None
 
-            if "homeassistant" in alert:
-                if "affected_from_version" in alert["homeassistant"]:
-                    affected_from_version = AwesomeVersion(
-                        alert["homeassistant"]["affected_from_version"],
-                    )
-                    if self.ha_version < affected_from_version:
-                        continue
-                if "resolved_in_version" in alert["homeassistant"]:
-                    resolved_in_version = AwesomeVersion(
-                        alert["homeassistant"]["resolved_in_version"],
-                    )
-                    if self.ha_version >= resolved_in_version:
-                        continue
+        if "homeassistant" in alert and not self._is_relevant_alert(alert["homeassistant"], self.ha_version):
+            return None
 
-            if self.supervisor and "supervisor" in alert:
-                if (supervisor_info := get_supervisor_info(self.hass)) is None:
-                    continue
+        if self.supervisor and "supervisor" in alert:
+            supervisor_info = get_supervisor_info(self.hass)
+            if supervisor_info is None or not self._is_relevant_alert(alert["supervisor"], supervisor_info["version"]):
+                return None
 
-                if "affected_from_version" in alert["supervisor"]:
-                    affected_from_version = AwesomeVersion(
-                        alert["supervisor"]["affected_from_version"],
-                    )
-                    if supervisor_info["version"] < affected_from_version:
-                        continue
-                if "resolved_in_version" in alert["supervisor"]:
-                    resolved_in_version = AwesomeVersion(
-                        alert["supervisor"]["resolved_in_version"],
-                    )
-                    if supervisor_info["version"] >= resolved_in_version:
-                        continue
-
-            for integration in alert["integrations"]:
-                if "package" not in integration:
-                    continue
-
-                if integration["package"] not in self.hass.config.components:
-                    continue
-
-                integration_alert = IntegrationAlert(
+        for integration in alert["integrations"]:
+            if "package" in integration and integration["package"] in self.hass.config.components:
+                return IntegrationAlert(
                     alert_id=alert["id"],
                     integration=integration["package"],
                     filename=alert["filename"],
                     date_updated=alert.get("updated"),
                 )
 
-                result[integration_alert.issue_id] = integration_alert
+        return None
 
-        return result
+    def _is_relevant_alert(self, version_info, current_version) -> bool:
+        if "affected_from_version" in version_info:
+            affected_from_version = AwesomeVersion(version_info["affected_from_version"])
+            if current_version < affected_from_version:
+                return False
+
+        if "resolved_in_version" in version_info:
+            resolved_in_version = AwesomeVersion(version_info["resolved_in_version"])
+            if current_version >= resolved_in_version:
+                return False
+        
+        return True
