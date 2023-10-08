@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from dataclasses import dataclass
 
 import pysnmp.hlapi.asyncio as hlapi
 from pysnmp.hlapi.asyncio import (
@@ -170,68 +171,74 @@ async def async_setup_platform(
         True,
     )
 
+@dataclass
+class GeneralConfig:
+    name: str
+    host: str
+    port: int
+    baseoid: str
+    commandoid: str
+    payload_on: str
+    payload_off: str
+    command_payload_on: str
+    command_payload_off: str
+    vartype: str
+
+@dataclass
+class SnmpProtocolConfig:
+    community: str
+    version: str
+    username: str
+    authkey: str
+    authproto: str
+    privkey: str
+    privproto: str
 
 class SnmpSwitch(SwitchEntity):
     """Representation of a SNMP switch."""
 
     def __init__(
         self,
-        name,
-        host,
-        port,
-        community,
-        baseoid,
-        commandoid,
-        version,
-        username,
-        authkey,
-        authproto,
-        privkey,
-        privproto,
-        payload_on,
-        payload_off,
-        command_payload_on,
-        command_payload_off,
-        vartype,
+        general_config: GeneralConfig,
+        snmp_protocol_config: SnmpProtocolConfig,
     ):
         """Initialize the switch."""
-
-        self._name = name
-        self._baseoid = baseoid
-        self._vartype = vartype
+        self._name = general_config.name
+        self._baseoid = general_config.baseoid
+        self._vartype = general_config.vartype
 
         # Set the command OID to the base OID if command OID is unset
-        self._commandoid = commandoid or baseoid
-        self._command_payload_on = command_payload_on or payload_on
-        self._command_payload_off = command_payload_off or payload_off
+        self._commandoid = general_config.commandoid or general_config.baseoid
+        self._command_payload_on = general_config.command_payload_on or general_config.payload_on
+        self._command_payload_off = general_config.command_payload_off or general_config.payload_off
 
         self._state = None
-        self._payload_on = payload_on
-        self._payload_off = payload_off
+        self._payload_on = general_config.payload_on
+        self._payload_off = general_config.payload_off
 
-        if version == "3":
-            if not authkey:
-                authproto = "none"
-            if not privkey:
-                privproto = "none"
+        if snmp_protocol_config.version == "3":
+            if not snmp_protocol_config.authkey:
+                snmp_protocol_config.authproto = "none"
+            if not snmp_protocol_config.privkey:
+                snmp_protocol_config.privproto = "none"
 
             self._request_args = [
                 SnmpEngine(),
                 UsmUserData(
-                    username,
-                    authKey=authkey or None,
-                    privKey=privkey or None,
-                    authProtocol=getattr(hlapi, MAP_AUTH_PROTOCOLS[authproto]),
-                    privProtocol=getattr(hlapi, MAP_PRIV_PROTOCOLS[privproto]),
+                    snmp_protocol_config.username,
+                    authKey=snmp_protocol_config.authkey or None,
+                    privKey=snmp_protocol_config.privkey or None,
+                    authProtocol=getattr(hlapi, MAP_AUTH_PROTOCOLS[snmp_protocol_config.authproto]),
+                    privProtocol=getattr(hlapi, MAP_PRIV_PROTOCOLS[snmp_protocol_config.privproto]),
                 ),
-                UdpTransportTarget((host, port)),
+                UdpTransportTarget((general_config.host, general_config.port)),
                 ContextData(),
             ]
         else:
             self._request_args = [
                 SnmpEngine(),
-                CommunityData(community, mpModel=SNMP_VERSIONS[version]),
-                UdpTransportTarget((host, port)),
+                CommunityData(snmp_protocol_config.community, mpModel=SNMP_VERSIONS[snmp_protocol_config.version]),
+                UdpTransportTarget((general_config.host, general_config.port)),
                 ContextData(),
             ]
 

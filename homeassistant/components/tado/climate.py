@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
+from dataclasses import dataclass
 
 import voluptuous as vol
 
@@ -213,6 +214,24 @@ def create_climate_entity(tado, name: str, zone_id: int, device_info: dict):
     )
     return entity
 
+@dataclass
+class TempModeConfig:
+    heat_min_temp: float
+    heat_max_temp: float
+    heat_step: float
+    cool_min_temp: float
+    cool_max_temp: float
+    cool_step: float
+    supported_hvac_modes: list[str]
+    supported_fan_modes: list[str]
+    support_flags: int
+
+@dataclass
+class ZoneDeviceInfo:
+    zone_name: str
+    zone_id: int
+    zone_type: str
+    device_info: dict
 
 class TadoClimate(TadoZoneEntity, ClimateEntity):
     """Representation of a Tado climate entity."""
@@ -225,36 +244,25 @@ class TadoClimate(TadoZoneEntity, ClimateEntity):
     def __init__(
         self,
         tado,
-        zone_name,
-        zone_id,
-        zone_type,
-        heat_min_temp,
-        heat_max_temp,
-        heat_step,
-        cool_min_temp,
-        cool_max_temp,
-        cool_step,
-        supported_hvac_modes,
-        supported_fan_modes,
-        support_flags,
-        device_info,
+        zone_device_info: ZoneDeviceInfo,
+        temp_mode_config: TempModeConfig,
     ):
         """Initialize of Tado climate entity."""
         self._tado = tado
-        super().__init__(zone_name, tado.home_id, zone_id)
+        super().__init__(zone_device_info.zone_name, tado.home_id, zone_device_info.zone_id)
 
-        self.zone_id = zone_id
-        self.zone_type = zone_type
+        self.zone_id = zone_device_info.zone_id
+        self.zone_type = zone_device_info.zone_type
 
-        self._attr_unique_id = f"{zone_type} {zone_id} {tado.home_id}"
+        self._attr_unique_id = f"{zone_device_info.zone_type} {zone_device_info.zone_id} {tado.home_id}"
 
-        self._device_info = device_info
+        self._device_info = zone_device_info.device_info
         self._device_id = self._device_info["shortSerialNo"]
 
-        self._ac_device = zone_type == TYPE_AIR_CONDITIONING
-        self._attr_hvac_modes = supported_hvac_modes
-        self._attr_fan_modes = supported_fan_modes
-        self._attr_supported_features = support_flags
+        self._ac_device = zone_device_info.zone_type == TYPE_AIR_CONDITIONING
+        self._attr_hvac_modes = temp_mode_config.supported_hvac_modes
+        self._attr_fan_modes = temp_mode_config.supported_fan_modes
+        self._attr_supported_features = temp_mode_config.support_flags
 
         self._cur_temp = None
         self._cur_humidity = None
@@ -264,13 +272,13 @@ class TadoClimate(TadoZoneEntity, ClimateEntity):
                 TADO_TO_HA_SWING_MODE_MAP[TADO_SWING_OFF],
             ]
 
-        self._heat_min_temp = heat_min_temp
-        self._heat_max_temp = heat_max_temp
-        self._heat_step = heat_step
+        self._heat_min_temp = temp_mode_config.heat_min_temp
+        self._heat_max_temp = temp_mode_config.heat_max_temp
+        self._heat_step = temp_mode_config.heat_step
 
-        self._cool_min_temp = cool_min_temp
-        self._cool_max_temp = cool_max_temp
-        self._cool_step = cool_step
+        self._cool_min_temp = temp_mode_config.cool_min_temp
+        self._cool_max_temp = temp_mode_config.cool_max_temp
+        self._cool_step = temp_mode_config.cool_step
 
         self._target_temp = None
 

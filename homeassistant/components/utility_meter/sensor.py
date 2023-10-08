@@ -348,6 +348,25 @@ class UtilitySensorExtraStoredData(SensorExtraStoredData):
             status,
         )
 
+@dataclass
+class MeterSensorConfig:
+    meter_type: str = None
+    meter_offset: timedelta
+    cron_pattern: str = None
+    delta_values: bool
+    net_consumption: bool
+    periodically_resetting: bool
+    source_entity: str
+    parent_meter: str
+
+@dataclass
+class TariffIDConfig:
+    tariff_entity: str
+    tariff: str
+    name: str
+    unique_id: str
+    suggested_entity_id: str = None
+    device_info: str = None
 
 class UtilityMeterSensor(RestoreSensor):
     """Representation of an utility meter sensor."""
@@ -358,50 +377,41 @@ class UtilityMeterSensor(RestoreSensor):
     def __init__(
         self,
         *,
-        cron_pattern,
-        delta_values,
-        meter_offset,
-        meter_type,
-        name,
-        net_consumption,
-        parent_meter,
-        periodically_resetting,
-        source_entity,
-        tariff_entity,
-        tariff,
-        unique_id,
-        suggested_entity_id=None,
-        device_info=None,
+        meter_sensor_config: MeterSensorConfig,
+        tariff_id_config: TariffIDConfig,
     ):
         """Initialize the Utility Meter sensor."""
-        self._attr_unique_id = unique_id
-        self._attr_device_info = device_info
-        self.entity_id = suggested_entity_id
-        self._parent_meter = parent_meter
-        self._sensor_source_id = source_entity
+        self._attr_unique_id = tariff_id_config.unique_id
+        self._attr_device_info = tariff_id_config.device_info
+        self.entity_id = tariff_id_config.suggested_entity_id
+        self._parent_meter = tariff_id_config.parent_meter
+        self._name = tariff_id_config.name
         self._state = None
         self._last_period = Decimal(0)
         self._last_reset = dt_util.utcnow()
         self._last_valid_state = None
         self._collecting = None
-        self._name = name
         self._unit_of_measurement = None
-        self._period = meter_type
-        if meter_type is not None:
-            # For backwards compatibility reasons we convert the period and offset into a cron pattern
-            self._cron_pattern = PERIOD2CRON[meter_type].format(
-                minute=meter_offset.seconds % 3600 // 60,
-                hour=meter_offset.seconds // 3600,
-                day=meter_offset.days + 1,
+        self._period = meter_sensor_config.meter_type
+        if meter_sensor_config.meter_type is not None:
+            # Backward compatibility: convert period and offset into a cron pattern
+            self._cron_pattern = PERIOD2CRON[meter_sensor_config.meter_type].format(
+                minute=meter_sensor_config.meter_offset.seconds % 3600 // 60,
+                hour=meter_sensor_config.meter_offset.seconds // 3600,
+                day=meter_sensor_config.meter_offset.days + 1,
             )
             _LOGGER.debug("CRON pattern: %s", self._cron_pattern)
         else:
-            self._cron_pattern = cron_pattern
-        self._sensor_delta_values = delta_values
-        self._sensor_net_consumption = net_consumption
-        self._sensor_periodically_resetting = periodically_resetting
-        self._tariff = tariff
-        self._tariff_entity = tariff_entity
+            self._cron_pattern = meter_sensor_config.cron_pattern
+
+        self._sensor_source_id = meter_sensor_config.source_entity
+        self._sensor_delta_values = meter_sensor_config.delta_values
+        self._sensor_net_consumption = meter_sensor_config.net_consumption
+        self._sensor_periodically_resetting = meter_sensor_config.periodically_resetting
+
+        # Tariff and Identification configuration
+        self._tariff = tariff_id_config.tariff
+        self._tariff_entity = tariff_id_config.tariff_entity
 
     def start(self, unit):
         """Initialize unit and state upon source initial update."""

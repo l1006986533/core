@@ -53,6 +53,30 @@ from . import (
     CONF_WET_TOLERANCE,
     HYGROSTAT_SCHEMA,
 )
+from dataclasses import dataclass
+
+@dataclass
+class BasicSettings:
+    name: str
+    min_humidity: int | None
+    max_humidity: int | None
+    target_humidity: int | None
+
+@dataclass
+class ToleranceSettings:
+    dry_tolerance: int
+    wet_tolerance: int
+
+@dataclass
+class DeviceSettings:
+    device_class: str | None
+    min_cycle_duration: int
+    sensor_stale_duration: int
+
+@dataclass
+class ModeSettings:
+    away_humidity: int | None
+    away_fixed: bool
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -117,49 +141,38 @@ class GenericHygrostat(HumidifierEntity, RestoreEntity):
 
     def __init__(
         self,
-        name,
-        switch_entity_id,
-        sensor_entity_id,
-        min_humidity,
-        max_humidity,
-        target_humidity,
-        device_class,
-        min_cycle_duration,
-        dry_tolerance,
-        wet_tolerance,
-        keep_alive,
-        initial_state,
-        away_humidity,
-        away_fixed,
-        sensor_stale_duration,
+        switch_entity_id: str,
+        sensor_entity_id: str,
+        basic_settings: BasicSettings,
+        tolerance_settings: ToleranceSettings,
+        device_settings: DeviceSettings,
+        mode_settings: ModeSettings,
+        keep_alive: int,
+        initial_state: bool
     ):
         """Initialize the hygrostat."""
-        self._name = name
         self._switch_entity_id = switch_entity_id
         self._sensor_entity_id = sensor_entity_id
-        self._device_class = device_class
-        self._min_cycle_duration = min_cycle_duration
-        self._dry_tolerance = dry_tolerance
-        self._wet_tolerance = wet_tolerance
+
+        self._name = basic_settings.name
+        self._min_humidity = basic_settings.min_humidity
+        self._max_humidity = basic_settings.max_humidity
+        self._target_humidity = basic_settings.target_humidity
+
+        self._dry_tolerance = tolerance_settings.dry_tolerance
+        self._wet_tolerance = tolerance_settings.wet_tolerance
+
+        self._device_class = device_settings.device_class
+        self._min_cycle_duration = device_settings.min_cycle_duration
+        self._sensor_stale_duration = device_settings.sensor_stale_duration
+
+        self._away_humidity = mode_settings.away_humidity
+        self._away_fixed = mode_settings.away_fixed
+
         self._keep_alive = keep_alive
         self._state = initial_state
-        self._saved_target_humidity = away_humidity or target_humidity
-        self._active = False
-        self._cur_humidity = None
-        self._humidity_lock = asyncio.Lock()
-        self._min_humidity = min_humidity
-        self._max_humidity = max_humidity
-        self._target_humidity = target_humidity
-        if away_humidity:
-            self._attr_supported_features |= HumidifierEntityFeature.MODES
-        self._away_humidity = away_humidity
-        self._away_fixed = away_fixed
-        self._sensor_stale_duration = sensor_stale_duration
-        self._remove_stale_tracking = None
-        self._is_away = False
-        if not self._device_class:
-            self._device_class = HumidifierDeviceClass.HUMIDIFIER
-        self._attr_action = HumidifierAction.IDLE
+
+
 
     async def async_added_to_hass(self):
         """Run when entity about to be added."""

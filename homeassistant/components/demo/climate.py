@@ -16,8 +16,37 @@ from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from dataclasses import dataclass
 
 from . import DOMAIN
+
+@dataclass
+class TemperatureSettings:
+    target_temperature: float | None
+    current_temperature: float
+    target_temp_high: float | None
+    target_temp_low: float | None
+    unit_of_measurement: str
+
+@dataclass
+class HumiditySettings:
+    target_humidity: int | None
+    current_humidity: int | None
+
+@dataclass
+class ModeSettings:
+    hvac_mode: HVACMode
+    hvac_action: HVACAction | None
+    hvac_modes: list[HVACMode]
+
+@dataclass
+class ExtraFeatures:
+    preset: str | None
+    preset_modes: list[str] | None
+    fan_mode: str | None
+    swing_mode: str | None
+    aux: bool | None
+
 
 SUPPORT_FLAGS = ClimateEntityFeature(0)
 
@@ -101,62 +130,43 @@ class DemoClimate(ClimateEntity):
         self,
         unique_id: str,
         device_name: str,
-        target_temperature: float | None,
-        unit_of_measurement: str,
-        preset: str | None,
-        current_temperature: float,
-        fan_mode: str | None,
-        target_humidity: int | None,
-        current_humidity: int | None,
-        swing_mode: str | None,
-        hvac_mode: HVACMode,
-        hvac_action: HVACAction | None,
-        aux: bool | None,
-        target_temp_high: float | None,
-        target_temp_low: float | None,
-        hvac_modes: list[HVACMode],
-        preset_modes: list[str] | None = None,
+        temperature_settings: TemperatureSettings,
+        humidity_settings: HumiditySettings,
+        mode_settings: ModeSettings,
+        extra_features: ExtraFeatures,
     ) -> None:
         """Initialize the climate device."""
         self._unique_id = unique_id
         self._attr_supported_features = SUPPORT_FLAGS
-        if target_temperature is not None:
-            self._attr_supported_features |= ClimateEntityFeature.TARGET_TEMPERATURE
-        if preset is not None:
-            self._attr_supported_features |= ClimateEntityFeature.PRESET_MODE
-        if fan_mode is not None:
-            self._attr_supported_features |= ClimateEntityFeature.FAN_MODE
-        if target_humidity is not None:
-            self._attr_supported_features |= ClimateEntityFeature.TARGET_HUMIDITY
-        if swing_mode is not None:
-            self._attr_supported_features |= ClimateEntityFeature.SWING_MODE
-        if aux is not None:
-            self._attr_supported_features |= ClimateEntityFeature.AUX_HEAT
-        if HVACMode.HEAT_COOL in hvac_modes or HVACMode.AUTO in hvac_modes:
-            self._attr_supported_features |= (
-                ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
-            )
-        self._target_temperature = target_temperature
-        self._target_humidity = target_humidity
-        self._unit_of_measurement = unit_of_measurement
-        self._preset = preset
-        self._preset_modes = preset_modes
-        self._current_temperature = current_temperature
-        self._current_humidity = current_humidity
-        self._current_fan_mode = fan_mode
-        self._hvac_action = hvac_action
-        self._hvac_mode = hvac_mode
-        self._aux = aux
-        self._current_swing_mode = swing_mode
-        self._fan_modes = ["on_low", "on_high", "auto_low", "auto_high", "off"]
-        self._hvac_modes = hvac_modes
-        self._swing_modes = ["auto", "1", "2", "3", "off"]
-        self._target_temperature_high = target_temp_high
-        self._target_temperature_low = target_temp_low
+
+        # Assign temperature settings
+        self._target_temperature = temperature_settings.target_temperature
+        self._current_temperature = temperature_settings.current_temperature
+        self._target_temperature_high = temperature_settings.target_temp_high
+        self._target_temperature_low = temperature_settings.target_temp_low
+        self._unit_of_measurement = temperature_settings.unit_of_measurement
+
+        # Assign humidity settings
+        self._target_humidity = humidity_settings.target_humidity
+        self._current_humidity = humidity_settings.current_humidity
+
+        # Assign mode settings
+        self._hvac_mode = mode_settings.hvac_mode
+        self._hvac_action = mode_settings.hvac_action
+        self._hvac_modes = mode_settings.hvac_modes
+
+        # Assign extra features
+        self._preset = extra_features.preset
+        self._preset_modes = extra_features.preset_modes
+        self._current_fan_mode = extra_features.fan_mode
+        self._current_swing_mode = extra_features.swing_mode
+        self._aux = extra_features.aux
+
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, unique_id)},
             name=device_name,
         )
+
 
     @property
     def unique_id(self) -> str:

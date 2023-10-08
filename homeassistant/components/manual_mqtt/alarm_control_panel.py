@@ -223,84 +223,66 @@ async def async_setup_platform(
             )
         ]
     )
+class ManualMQTTAlarmConfig:
+    def __init__(self, config, hass=None):
+        self.hass = hass
+        self.name = config[CONF_NAME]
+        self.code = config.get(CONF_CODE)
+        self.code_template = config.get(CONF_CODE_TEMPLATE)
+        self.disarm_after_trigger = config.get(CONF_DISARM_AFTER_TRIGGER, DEFAULT_DISARM_AFTER_TRIGGER)
+        self.state_topic = config.get(mqtt.CONF_STATE_TOPIC)
+        self.command_topic = config.get(mqtt.CONF_COMMAND_TOPIC)
+        self.qos = config.get(mqtt.CONF_QOS)
+        self.code_arm_required = config.get(CONF_CODE_ARM_REQUIRED)
+        self.payload_disarm = config.get(CONF_PAYLOAD_DISARM)
+        self.payload_arm_home = config.get(CONF_PAYLOAD_ARM_HOME)
+        self.payload_arm_away = config.get(CONF_PAYLOAD_ARM_AWAY)
+        self.payload_arm_night = config.get(CONF_PAYLOAD_ARM_NIGHT)
+        self.payload_arm_vacation = config.get(CONF_PAYLOAD_ARM_VACATION)
+        self.payload_arm_custom_bypass = config.get(CONF_PAYLOAD_ARM_CUSTOM_BYPASS)
+        self.config = config
 
 
 class ManualMQTTAlarm(alarm.AlarmControlPanelEntity):
-    """Representation of an alarm status.
-
-    When armed, will be pending for 'pending_time', after that armed.
-    When triggered, will be pending for the triggering state's 'delay_time'
-    plus the triggered state's 'pending_time'.
-    After that will be triggered for 'trigger_time', after that we return to
-    the previous state or disarm if `disarm_after_trigger` is true.
-    A trigger_time of zero disables the alarm_trigger service.
-    """
-
-    _attr_should_poll = False
-    _attr_supported_features = (
-        AlarmControlPanelEntityFeature.ARM_HOME
-        | AlarmControlPanelEntityFeature.ARM_AWAY
-        | AlarmControlPanelEntityFeature.ARM_NIGHT
-        | AlarmControlPanelEntityFeature.ARM_VACATION
-        | AlarmControlPanelEntityFeature.TRIGGER
-        | AlarmControlPanelEntityFeature.ARM_CUSTOM_BYPASS
-    )
-
-    def __init__(
-        self,
-        hass,
-        name,
-        code,
-        code_template,
-        disarm_after_trigger,
-        state_topic,
-        command_topic,
-        qos,
-        code_arm_required,
-        payload_disarm,
-        payload_arm_home,
-        payload_arm_away,
-        payload_arm_night,
-        payload_arm_vacation,
-        payload_arm_custom_bypass,
-        config,
-    ):
+    ...
+    def __init__(self, alarm_config: ManualMQTTAlarmConfig):
         """Init the manual MQTT alarm panel."""
         self._state = STATE_ALARM_DISARMED
-        self._hass = hass
-        self._attr_name = name
-        if code_template:
-            self._code = code_template
-            self._code.hass = hass
+        self._hass = alarm_config.hass
+        self._attr_name = alarm_config.name
+        if alarm_config.code_template:
+            self._code = alarm_config.code_template
+            self._code.hass = alarm_config.hass
         else:
-            self._code = code or None
-        self._disarm_after_trigger = disarm_after_trigger
+            self._code = alarm_config.code or None
+        self._disarm_after_trigger = alarm_config.disarm_after_trigger
         self._previous_state = self._state
         self._state_ts = None
 
         self._delay_time_by_state = {
-            state: config[state][CONF_DELAY_TIME]
+            state: alarm_config.config[state][CONF_DELAY_TIME]
             for state in SUPPORTED_PRETRIGGER_STATES
         }
         self._trigger_time_by_state = {
-            state: config[state][CONF_TRIGGER_TIME]
+            state: alarm_config.config[state][CONF_TRIGGER_TIME]
             for state in SUPPORTED_PRETRIGGER_STATES
         }
         self._pending_time_by_state = {
-            state: config[state][CONF_PENDING_TIME]
+            state: alarm_config.config[state][CONF_PENDING_TIME]
             for state in SUPPORTED_PENDING_STATES
         }
 
-        self._state_topic = state_topic
-        self._command_topic = command_topic
-        self._qos = qos
-        self._attr_code_arm_required = code_arm_required
-        self._payload_disarm = payload_disarm
-        self._payload_arm_home = payload_arm_home
-        self._payload_arm_away = payload_arm_away
-        self._payload_arm_night = payload_arm_night
-        self._payload_arm_vacation = payload_arm_vacation
-        self._payload_arm_custom_bypass = payload_arm_custom_bypass
+        self._state_topic = alarm_config.state_topic
+        self._command_topic = alarm_config.command_topic
+        self._qos = alarm_config.qos
+        self._attr_code_arm_required = alarm_config.code_arm_required
+        self._payload_disarm = alarm_config.payload_disarm
+        self._payload_arm_home = alarm_config.payload_arm_home
+        self._payload_arm_away = alarm_config.payload_arm_away
+        self._payload_arm_night = alarm_config.payload_arm_night
+        self._payload_arm_vacation = alarm_config.payload_arm_vacation
+        self._payload_arm_custom_bypass = alarm_config.payload_arm_custom_bypass
+
 
     @property
     def state(self) -> str:

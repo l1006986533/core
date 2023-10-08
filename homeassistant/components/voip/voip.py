@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 import time
 from typing import TYPE_CHECKING
+from dataclasses import dataclass
 
 from voip_utils import (
     CallInfo,
@@ -132,6 +133,20 @@ class HassVoipDatagramProtocol(VoipDatagramProtocol):
         """Wait for connection_lost to be called."""
         await self._closed_event.wait()
 
+@dataclass
+class AudioConfig:
+    listening_enabled: bool
+    processing_enabled: bool
+    error_enabled: bool
+    delay: float
+    buffered_chunks_before_speech: int
+    silence_seconds: float
+
+@dataclass
+class TimeoutConfig:
+    pipeline: float
+    audio: float
+    tts_extra: float
 
 class PipelineRtpDatagramProtocol(RtpDatagramProtocol):
     """Run a voice assistant pipeline in a loop for a VoIP call."""
@@ -143,15 +158,8 @@ class PipelineRtpDatagramProtocol(RtpDatagramProtocol):
         voip_device: VoIPDevice,
         context: Context,
         opus_payload_type: int,
-        pipeline_timeout: float = 30.0,
-        audio_timeout: float = 2.0,
-        buffered_chunks_before_speech: int = 100,
-        listening_tone_enabled: bool = True,
-        processing_tone_enabled: bool = True,
-        error_tone_enabled: bool = True,
-        tone_delay: float = 0.2,
-        tts_extra_timeout: float = 1.0,
-        silence_seconds: float = 1.0,
+        audio_config: AudioConfig,
+        timeout_config: TimeoutConfig,
         rtcp_state: RtcpState | None = None,
     ) -> None:
         """Set up pipeline RTP server."""
@@ -167,15 +175,15 @@ class PipelineRtpDatagramProtocol(RtpDatagramProtocol):
         self.language = language
         self.voip_device = voip_device
         self.pipeline: Pipeline | None = None
-        self.pipeline_timeout = pipeline_timeout
-        self.audio_timeout = audio_timeout
-        self.buffered_chunks_before_speech = buffered_chunks_before_speech
-        self.listening_tone_enabled = listening_tone_enabled
-        self.processing_tone_enabled = processing_tone_enabled
-        self.error_tone_enabled = error_tone_enabled
-        self.tone_delay = tone_delay
-        self.tts_extra_timeout = tts_extra_timeout
-        self.silence_seconds = silence_seconds
+        self.pipeline_timeout = timeout_config.pipeline
+        self.audio_timeout = timeout_config.audio
+        self.buffered_chunks_before_speech = audio_config.buffered_chunks_before_speech
+        self.listening_tone_enabled = audio_config.listening_enabled
+        self.processing_tone_enabled = audio_config.processing_enabled
+        self.error_tone_enabled = audio_config.error_enabled
+        self.tone_delay = audio_config.delay
+        self.tts_extra_timeout = timeout_config.tts_extra
+        self.silence_seconds = audio_config.silence_seconds
 
         self._audio_queue: asyncio.Queue[bytes] = asyncio.Queue()
         self._context = context

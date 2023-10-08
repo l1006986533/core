@@ -88,6 +88,28 @@ CONF_PRESETS = {
         PRESET_ACTIVITY,
     )
 }
+config = ThermostatConfig(
+    name="My Thermostat",
+    heater_entity_id="heater_1",
+    sensor_entity_id="sensor_1",
+    min_temp=15,
+    max_temp=25,
+    target_temp=20,
+    ac_mode=False,
+    min_cycle_duration=None,
+    cold_tolerance=0.3,
+    hot_tolerance=0.3,
+    keep_alive=None,
+    initial_hvac_mode=HVACMode.OFF,
+    presets={},
+    precision=None,
+    target_temperature_step=None,
+    unit="C",
+    unique_id="thermostat_1"
+)
+
+thermostat = GenericThermostat(config)
+
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend(
     {
@@ -171,64 +193,70 @@ async def async_setup_platform(
     )
 
 
-class GenericThermostat(ClimateEntity, RestoreEntity):
-    """Representation of a Generic Thermostat device."""
-
-    _attr_should_poll = False
-
-    def __init__(
-        self,
-        name,
-        heater_entity_id,
-        sensor_entity_id,
-        min_temp,
-        max_temp,
-        target_temp,
-        ac_mode,
-        min_cycle_duration,
-        cold_tolerance,
-        hot_tolerance,
-        keep_alive,
-        initial_hvac_mode,
-        presets,
-        precision,
-        target_temperature_step,
-        unit,
-        unique_id,
-    ):
-        """Initialize the thermostat."""
-        self._attr_name = name
+class ThermostatConfig:
+    def __init__(self, name, heater_entity_id, sensor_entity_id, min_temp, max_temp,
+                 target_temp, ac_mode, min_cycle_duration, cold_tolerance, hot_tolerance,
+                 keep_alive, initial_hvac_mode, presets, precision, target_temperature_step,
+                 unit, unique_id):
+        self.name = name
         self.heater_entity_id = heater_entity_id
         self.sensor_entity_id = sensor_entity_id
+        self.min_temp = min_temp
+        self.max_temp = max_temp
+        self.target_temp = target_temp
         self.ac_mode = ac_mode
         self.min_cycle_duration = min_cycle_duration
-        self._cold_tolerance = cold_tolerance
-        self._hot_tolerance = hot_tolerance
-        self._keep_alive = keep_alive
-        self._hvac_mode = initial_hvac_mode
-        self._saved_target_temp = target_temp or next(iter(presets.values()), None)
-        self._temp_precision = precision
-        self._temp_target_temperature_step = target_temperature_step
-        if self.ac_mode:
+        self.cold_tolerance = cold_tolerance
+        self.hot_tolerance = hot_tolerance
+        self.keep_alive = keep_alive
+        self.initial_hvac_mode = initial_hvac_mode
+        self.presets = presets
+        self.precision = precision
+        self.target_temperature_step = target_temperature_step
+        self.unit = unit
+        self.unique_id = unique_id
+
+
+class GenericThermostat(ClimateEntity, RestoreEntity):
+    """Representation of a Generic Thermostat device."""
+    _attr_should_poll = False
+    
+    def __init__(self, config):
+        """Initialize the thermostat."""
+        self._config = config
+        self._attr_name = config.name
+        self.heater_entity_id = config.heater_entity_id
+        self.sensor_entity_id = config.sensor_entity_id
+        self.ac_mode = config.ac_mode
+        self.min_cycle_duration = config.min_cycle_duration
+        self._cold_tolerance = config.cold_tolerance
+        self._hot_tolerance = config.hot_tolerance
+        self._keep_alive = config.keep_alive
+        self._hvac_mode = config.initial_hvac_mode
+        self._saved_target_temp = config.target_temp or next(iter(config.presets.values()), None)
+        self._temp_precision = config.precision
+        self._temp_target_temperature_step = config.target_temperature_step
+        if config.ac_mode:
             self._attr_hvac_modes = [HVACMode.COOL, HVACMode.OFF]
         else:
             self._attr_hvac_modes = [HVACMode.HEAT, HVACMode.OFF]
         self._active = False
         self._cur_temp = None
         self._temp_lock = asyncio.Lock()
-        self._min_temp = min_temp
-        self._max_temp = max_temp
+        self._min_temp = config.min_temp
+        self._max_temp = config.max_temp
         self._attr_preset_mode = PRESET_NONE
-        self._target_temp = target_temp
-        self._attr_temperature_unit = unit
-        self._attr_unique_id = unique_id
+        self._target_temp = config.target_temp
+        self._attr_temperature_unit = config.unit
+        self._attr_unique_id = config.unique_id
         self._attr_supported_features = ClimateEntityFeature.TARGET_TEMPERATURE
-        if len(presets):
+        if len(config.presets):
             self._attr_supported_features |= ClimateEntityFeature.PRESET_MODE
-            self._attr_preset_modes = [PRESET_NONE] + list(presets.keys())
+            self._attr_preset_modes = [PRESET_NONE] + list(config.presets.keys())
         else:
             self._attr_preset_modes = [PRESET_NONE]
-        self._presets = presets
+        self._presets = config.presets
+
 
     async def async_added_to_hass(self) -> None:
         """Run when entity about to be added."""
